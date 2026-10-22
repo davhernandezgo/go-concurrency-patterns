@@ -72,3 +72,43 @@ func TestCircuitBreaker_Lifecycle(t *testing.T) {
 		t.Fatalf("expected state CLOSED after recovering, got %s", cb.State())
 	}
 }
+
+func BenchmarkCircuitBreaker_Execute_ClosedState(b *testing.B) {
+	cb := New(Config{
+		FailureThreshold: 5,
+		SuccessThreshold: 2,
+		Timeout:          1 * time.Second,
+	})
+
+	fn := func() (int, error) {
+		return 42, nil
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		_, _ = Execute(cb, fn)
+	}
+}
+
+func BenchmarkCircuitBreaker_Execute_Parallel(b *testing.B) {
+	cb := New(Config{
+		FailureThreshold: 5,
+		SuccessThreshold: 2,
+		Timeout:          1 * time.Second,
+	})
+
+	fn := func() (int, error) {
+		return 42, nil
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_, _ = Execute(cb, fn)
+		}
+	})
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/circuitbreaker"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/fanout"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/pipeline"
+	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/pubsub"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/ratelimiter"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/singleflight"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/workerpool"
@@ -33,6 +34,7 @@ func main() {
 	runStrategyDemo()
 	runMiddlewareDemo()
 	runSingleflightDemo()
+	runPubSubDemo()
 
 	fmt.Println("\n✨ All pattern demonstrations finished successfully!")
 }
@@ -221,4 +223,29 @@ func runSingleflightDemo() {
 		<-done
 	}
 	fmt.Printf(" Total DB/Service Calls executed for 5 concurrent callers: %d\n", callCount)
+}
+
+func runPubSubDemo() {
+	fmt.Println("\n--- [10] Concurrency: Publish-Subscribe Event Bus (Fan-Out & Backpressure) ---")
+	bus := pubsub.New[string]()
+	defer bus.Close()
+
+	// 1. Subscribe to exact topic
+	emailSub, _ := bus.Subscribe("orders.created", 5, pubsub.DropOldest)
+	defer emailSub.Unsubscribe()
+
+	// 2. Subscribe to wildcard topic pattern
+	auditSub, _ := bus.Subscribe("orders.*", 5, pubsub.DropOldest)
+	defer auditSub.Unsubscribe()
+
+	ctx := context.Background()
+
+	// Publish domain events
+	_ = bus.Publish(ctx, "orders.created", "Order #90210 ($129.99)")
+	_ = bus.Publish(ctx, "orders.shipped", "Order #90210 tracking: TRK-5541")
+
+	// Read from subscribers
+	fmt.Printf(" [Email Service] Received: '%s'\n", <-emailSub.C())
+	fmt.Printf(" [Audit Logger]  Received: '%s'\n", <-auditSub.C())
+	fmt.Printf(" [Audit Logger]  Received: '%s'\n", <-auditSub.C())
 }

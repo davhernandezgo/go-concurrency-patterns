@@ -91,3 +91,21 @@ func TestSingleflight_ErrorPropagation(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func BenchmarkSingleflight_DuplicateSuppression(b *testing.B) {
+	g := NewGroup[string]()
+	fn := func() (string, error) {
+		time.Sleep(1 * time.Millisecond)
+		return "cached-value", nil
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_, _, _ = g.Do("benchmark-key", fn)
+		}
+	})
+}
+
