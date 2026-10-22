@@ -100,6 +100,7 @@ stateDiagram-v2
 | **Fan-Out / Fan-In** (`pkg/concurrency/fanout`) | Distributes workloads across goroutines and multiplexes results. | Parallel CPU/IO multiplexing with `sync.WaitGroup` and leak-free cancellation. |
 | **Circuit Breaker** (`pkg/concurrency/circuitbreaker`) | Prevents cascading system failures during downstream outages. | Three-state machine (`CLOSED`, `OPEN`, `HALF_OPEN`), thread-safe state transitions, zero external dependencies. |
 | **Token Bucket Limiter** (`pkg/concurrency/ratelimiter`) | Throttles traffic allowing bursts up to bucket capacity. | Float precision refill calculation, instant `Allow()`, and non-busy-waiting `Wait(ctx)`. |
+| **Singleflight** (`pkg/concurrency/singleflight`) | Suppresses duplicate in-flight requests (cache stampede prevention). | Executes identical concurrent requests only once, broadcasting results across all waiting callers using `sync.WaitGroup` and mutex locks. |
 
 ### Idiomatic & GoF Design Patterns
 

@@ -12,6 +12,7 @@ import (
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/fanout"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/pipeline"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/ratelimiter"
+	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/singleflight"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/workerpool"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/patterns/functionaloptions"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/patterns/middleware"
@@ -31,6 +32,7 @@ func main() {
 	runFunctionalOptionsDemo()
 	runStrategyDemo()
 	runMiddlewareDemo()
+	runSingleflightDemo()
 
 	fmt.Println("\n✨ All pattern demonstrations finished successfully!")
 }
@@ -193,4 +195,30 @@ func runMiddlewareDemo() {
 	rec := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/api/v1/orders", nil)
 	handler.ServeHTTP(rec, req)
+}
+
+func runSingleflightDemo() {
+	fmt.Println("\n--- [9] Concurrency: Singleflight (Duplicate Request Suppression) ---")
+	group := singleflight.NewGroup[string]()
+
+	var callCount int
+	expensiveFetch := func() (string, error) {
+		callCount++
+		time.Sleep(30 * time.Millisecond) // simulate heavy DB query
+		return "user-profile-data-cached", nil
+	}
+
+	done := make(chan struct{})
+	for i := 1; i <= 5; i++ {
+		go func(callerID int) {
+			res, _, shared := group.Do("user:42", expensiveFetch)
+			fmt.Printf(" [Caller %d] Received: '%s' (Shared: %v)\n", callerID, res, shared)
+			done <- struct{}{}
+		}(i)
+	}
+
+	for i := 1; i <= 5; i++ {
+		<-done
+	}
+	fmt.Printf(" Total DB/Service Calls executed for 5 concurrent callers: %d\n", callCount)
 }
