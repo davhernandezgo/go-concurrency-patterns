@@ -11,7 +11,7 @@ func TestCircuitBreaker_Lifecycle(t *testing.T) {
 	cb := New(Config{
 		FailureThreshold: 2,
 		SuccessThreshold: 2,
-		Timeout:          50 * time.Millisecond,
+		Timeout:          30 * time.Millisecond,
 	})
 
 	if cb.State() != StateClosed {

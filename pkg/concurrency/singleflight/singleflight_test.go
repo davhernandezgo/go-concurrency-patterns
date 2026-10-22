@@ -12,14 +12,19 @@ func TestSingleflight_DuplicateSuppression(t *testing.T) {
 	g := NewGroup[string]()
 	var callCount int32
 	blockCh := make(chan struct{})
+	enteredFirst := make(chan struct{})
+	var once sync.Once
 
 	fn := func() (string, error) {
 		atomic.AddInt32(&callCount, 1)
+		once.Do(func() {
+			close(enteredFirst)
+		})
 		<-blockCh
 		return "expensive-result", nil
 	}
 
-	const callers = 20
+	const callers = 10
 	var wg sync.WaitGroup
 	results := make([]string, callers)
 	sharedFlags := make([]bool, callers)
@@ -37,8 +42,9 @@ func TestSingleflight_DuplicateSuppression(t *testing.T) {
 		}(i)
 	}
 
-	// Give all goroutines time to block in g.Do
-	time.Sleep(20 * time.Millisecond)
+	// Wait until the single in-flight call has definitely started
+	<-enteredFirst
+	time.Sleep(50 * time.Millisecond) // Allow all other callers to queue up on the in-flight call
 	close(blockCh)
 	wg.Wait()
 

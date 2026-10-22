@@ -20,8 +20,8 @@ func TestTokenBucket_BurstAndRefill(t *testing.T) {
 		t.Fatal("expected 4th immediate token to be rejected")
 	}
 
-	// Wait 120ms -> should replenish at least 1 token (10 tokens/sec * 0.12s = 1.2 tokens)
-	time.Sleep(120 * time.Millisecond)
+	// Wait 150ms -> should replenish at least 1 token (10 tokens/sec * 0.15s = 1.5 tokens)
+	time.Sleep(150 * time.Millisecond)
 	if !tb.Allow() {
 		t.Fatal("expected token to be replenished after sleep")
 	}

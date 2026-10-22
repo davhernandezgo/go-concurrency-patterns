@@ -5,7 +5,6 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func TestWorkerPool_Basic(t *testing.T) {
@@ -89,7 +88,11 @@ func TestWorkerPool_ErrorHandling(t *testing.T) {
 func TestWorkerPool_TrySubmit(t *testing.T) {
 	// 1 worker, 1 queue size
 	blockCh := make(chan struct{})
+	startedCh := make(chan struct{})
 	handler := func(ctx context.Context, val int) (int, error) {
+		if val == 1 {
+			close(startedCh)
+		}
 		<-blockCh
 		return val, nil
 	}
@@ -97,11 +100,14 @@ func TestWorkerPool_TrySubmit(t *testing.T) {
 	pool := New[int, int](1, 1, handler)
 	pool.Start()
 
-	// Fill worker and queue
-	_ = pool.TrySubmit(1) // handled by worker
-	time.Sleep(10 * time.Millisecond)
-	err1 := pool.TrySubmit(2) // goes into queue
-	err2 := pool.TrySubmit(3) // should fail with ErrPoolFull
+	// Item 1 is picked up by the worker
+	_ = pool.TrySubmit(1)
+	<-startedCh // Deterministically wait for worker to pick up item 1
+
+	// Queue is now empty, so item 2 is accepted into the queue
+	err1 := pool.TrySubmit(2)
+	// Queue is now full (item 2 is in queue, item 1 in worker), so item 3 must fail with ErrPoolFull
+	err2 := pool.TrySubmit(3)
 
 	if err1 != nil {
 		t.Fatalf("expected item 2 to be accepted in queue, got %v", err1)
