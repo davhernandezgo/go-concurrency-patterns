@@ -92,6 +92,57 @@ func TestSingleflight_ErrorPropagation(t *testing.T) {
 	wg.Wait()
 }
 
+func TestSingleflight_DoChan(t *testing.T) {
+	g := NewGroup[string]()
+	var callCount int32
+	blockCh := make(chan struct{})
+
+	fn := func() (string, error) {
+		atomic.AddInt32(&callCount, 1)
+		<-blockCh
+		return "async-result", nil
+	}
+
+	ch1 := g.DoChan("async-key", fn)
+	ch2 := g.DoChan("async-key", fn)
+
+	close(blockCh)
+
+	res1 := <-ch1
+	res2 := <-ch2
+
+	if res1.Val != "async-result" || res1.Err != nil {
+		t.Fatalf("unexpected res1: %+v", res1)
+	}
+	if res2.Val != "async-result" || res2.Err != nil {
+		t.Fatalf("unexpected res2: %+v", res2)
+	}
+	if !res2.Shared {
+		t.Fatalf("expected res2 to be marked shared")
+	}
+	if calls := atomic.LoadInt32(&callCount); calls != 1 {
+		t.Fatalf("expected exactly 1 call, got %d", calls)
+	}
+}
+
+func TestSingleflight_DoChanTimeout(t *testing.T) {
+	g := NewGroup[string]()
+
+	hangingFn := func() (string, error) {
+		time.Sleep(100 * time.Millisecond)
+		return "done", nil
+	}
+
+	ch := g.DoChan("timeout-key", hangingFn)
+
+	select {
+	case <-ch:
+		t.Fatalf("expected channel to not receive yet")
+	case <-time.After(10 * time.Millisecond):
+		// Expected timeout without blocking
+	}
+}
+
 func BenchmarkSingleflight_DuplicateSuppression(b *testing.B) {
 	g := NewGroup[string]()
 	fn := func() (string, error) {

@@ -18,6 +18,7 @@
   - [3. Fan-Out / Fan-In](#3-fan-out--fan-in)
   - [4. Resilient Circuit Breaker](#4-resilient-circuit-breaker)
   - [5. Concurrent Event Bus (Pub/Sub)](#5-concurrent-event-bus-pubsub)
+  - [6. Hedged Requests (Tail-Tolerance)](#6-hedged-requests-tail-tolerance)
 - [Catalog of Patterns](#-catalog-of-patterns)
   - [Concurrency Primitives](#concurrency-primitives)
   - [Idiomatic & GoF Design Patterns](#idiomatic--gof-design-patterns)
@@ -98,6 +99,27 @@ flowchart TD
     Bus -->|Topic: orders.*| S3[Subscriber 3: Audit Event Logger]
 ```
 
+### 6. Hedged Requests (Tail-Tolerance)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Engine as Hedged Engine
+    participant P as Primary Replica
+    participant H as Hedged Replica (Secondary)
+
+    Client->>Engine: Execute(tasks)
+    Engine->>P: Dispatch Task 1 (Primary)
+    Note over Engine: Start Hedged Delay Timer (e.g. 30ms)
+    Note over P: P99 Tail Latency / Network Jitter...
+    Engine-->>Engine: Delay Elapsed (30ms)
+    Engine->>H: Dispatch Task 2 (Speculative Hedge)
+    H-->>Engine: Response: 200 OK (15ms)
+    Note over Engine: Winner Found!
+    Engine->>P: Cancel in-flight Context
+    Engine-->>Client: Return Result
+```
+
 ---
 
 ## 📦 Catalog of Patterns
@@ -111,8 +133,9 @@ flowchart TD
 | **Fan-Out / Fan-In** (`pkg/concurrency/fanout`) | Distributes workloads across goroutines and multiplexes results. | Parallel CPU/IO multiplexing with `sync.WaitGroup` and leak-free cancellation. |
 | **Circuit Breaker** (`pkg/concurrency/circuitbreaker`) | Prevents cascading system failures during downstream outages. | Three-state machine (`CLOSED`, `OPEN`, `HALF_OPEN`), thread-safe state transitions, zero external dependencies. |
 | **Token Bucket Limiter** (`pkg/concurrency/ratelimiter`) | Throttles traffic allowing bursts up to bucket capacity. | Float precision refill calculation, instant `Allow()`, and non-busy-waiting `Wait(ctx)`. |
-| **Singleflight** (`pkg/concurrency/singleflight`) | Suppresses duplicate in-flight requests (cache stampede prevention). | Executes identical concurrent requests only once, broadcasting results across all waiting callers using `sync.WaitGroup` and mutex locks. |
+| **Singleflight** (`pkg/concurrency/singleflight`) | Suppresses duplicate in-flight requests (cache stampede prevention). | Executes identical concurrent requests only once, broadcasting results across all waiting callers. Supports blocking `Do()` and non-blocking `DoChan()` for timeout/context select loops. |
 | **Event Bus (Pub/Sub)** (`pkg/concurrency/pubsub`) | High-performance in-memory 1-to-N publish/subscribe broker. | Generic types, hierarchical/wildcard topic matching (`*`, `prefix.*`), configurable backpressure (`Block`, `DropOldest`, `DropNewest`), and leak-free graceful shutdown. |
+| **Hedged Requests** (`pkg/concurrency/hedged`) | Eliminates high-percentile (P99/P99.9) tail latency via speculative execution. | Configurable hedging delay, capped concurrency (`WithMaxHedges`), instant failover on early errors, context cancellation for losers, and atomic telemetry metrics. |
 
 ### Idiomatic & GoF Design Patterns
 
@@ -140,6 +163,8 @@ BenchmarkPubSub_Publish_SingleSub-10           11990934        101.2 ns/op      
 BenchmarkPubSub_Publish_FanOut_10Subs-10       2239363        525.9 ns/op         80 B/op          1 allocs/op
 BenchmarkPubSub_Publish_DropOldest-10          6577617        192.5 ns/op          8 B/op          1 allocs/op
 BenchmarkPubSub_Publish_Wildcard-10            3938796        303.6 ns/op         24 B/op          2 allocs/op
+BenchmarkHedged_PrimaryFast-10                 1321935        864.7 ns/op        648 B/op          9 allocs/op
+BenchmarkHedged_ParallelRace-10                1689344        722.1 ns/op        464 B/op          7 allocs/op
 BenchmarkCircuitBreaker_Execute_Closed-10     31254645         37.6 ns/op          0 B/op          0 allocs/op
 BenchmarkWorkerPool-10                            2457     481460 ns/op       4363 B/op         16 allocs/op
 BenchmarkUnboundedGoroutines-10                   3879     294619 ns/op      40059 B/op       2001 allocs/op

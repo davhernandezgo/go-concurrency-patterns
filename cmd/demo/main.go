@@ -10,6 +10,7 @@ import (
 
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/circuitbreaker"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/fanout"
+	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/hedged"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/pipeline"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/pubsub"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/ratelimiter"
@@ -35,6 +36,7 @@ func main() {
 	runMiddlewareDemo()
 	runSingleflightDemo()
 	runPubSubDemo()
+	runHedgedDemo()
 
 	fmt.Println("\n✨ All pattern demonstrations finished successfully!")
 }
@@ -248,4 +250,58 @@ func runPubSubDemo() {
 	fmt.Printf(" [Email Service] Received: '%s'\n", <-emailSub.C())
 	fmt.Printf(" [Audit Logger]  Received: '%s'\n", <-auditSub.C())
 	fmt.Printf(" [Audit Logger]  Received: '%s'\n", <-auditSub.C())
+}
+
+func runHedgedDemo() {
+	fmt.Println("\n--- [11] Concurrency: Hedged Requests (Tail-Latency Mitigation) ---")
+	engine := hedged.New[string](hedged.WithDelay(30 * time.Millisecond))
+	ctx := context.Background()
+
+	// Scenario 1: Primary is fast (< 30ms) -> No hedge fired
+	fmt.Println(" [Scenario 1] Primary replica responds in 10ms (SLA met):")
+	res1, _ := engine.Execute(ctx,
+		func(ctx context.Context) (string, error) {
+			time.Sleep(10 * time.Millisecond)
+			return "Primary-DB: 200 OK (Latency: 10ms)", nil
+		},
+		func(ctx context.Context) (string, error) {
+			return "Replica-DB: 200 OK", nil
+		},
+	)
+	fmt.Printf("   Result: %s\n", res1)
+
+	// Scenario 2: Primary experiences tail latency (150ms) -> Hedge replica fired at 30ms and wins!
+	fmt.Println(" [Scenario 2] Primary replica hangs with 150ms tail-latency; Hedge replica fired:")
+	res2, _ := engine.Execute(ctx,
+		func(ctx context.Context) (string, error) {
+			select {
+			case <-time.After(150 * time.Millisecond):
+				return "Primary-DB (Late)", nil
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		},
+		func(ctx context.Context) (string, error) {
+			time.Sleep(15 * time.Millisecond)
+			return "Replica-DB (Speculative Hedge Won!): 200 OK", nil
+		},
+	)
+	fmt.Printf("   Result: %s\n", res2)
+
+	// Scenario 3: Primary fails fast -> Hedge replica dispatched immediately without waiting for delay
+	fmt.Println(" [Scenario 3] Primary fails immediately; Hedge replica auto-promoted:")
+	res3, _ := engine.Execute(ctx,
+		func(ctx context.Context) (string, error) {
+			return "", fmt.Errorf("connection reset by primary host")
+		},
+		func(ctx context.Context) (string, error) {
+			time.Sleep(5 * time.Millisecond)
+			return "Replica-DB (Instant Failover): 200 OK", nil
+		},
+	)
+	fmt.Printf("   Result: %s\n", res3)
+
+	stats := engine.Stats()
+	fmt.Printf(" [Hedged Telemetry] Total: %d, PrimaryWins: %d, HedgeWins: %d, WinRatio: %.1f%%\n",
+		stats.TotalRequests, stats.PrimaryWins, stats.HedgeWins, stats.WinRatio())
 }

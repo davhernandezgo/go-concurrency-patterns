@@ -12,10 +12,11 @@ type Result[T any] struct {
 }
 
 type call[T any] struct {
-	wg  sync.WaitGroup
-	val T
-	err error
-	ch  chan Result[T]
+	wg    sync.WaitGroup
+	val   T
+	err   error
+	dups  int
+	chans []chan<- Result[T]
 }
 
 // Group represents a class of work and forms a namespace in which
@@ -43,6 +44,7 @@ func (g *Group[T]) Do(key string, fn func() (T, error)) (T, error, bool) {
 		g.m = make(map[string]*call[T])
 	}
 	if c, ok := g.m[key]; ok {
+		c.dups++
 		g.mu.Unlock()
 		c.wg.Wait()
 		return c.val, c.err, true
@@ -56,13 +58,40 @@ func (g *Group[T]) Do(key string, fn func() (T, error)) (T, error, bool) {
 	return c.val, c.err, false
 }
 
-func (g *Group[T]) doCall(c *call[T], key string, fn func() (T, error)) {
-	defer func() {
-		g.mu.Lock()
-		delete(g.m, key)
+// DoChan executes and returns a channel that receives the Result of the function
+// when complete. This non-blocking variant enables callers to select on ctx.Done()
+// or a timeout to prevent indefinite blocking.
+func (g *Group[T]) DoChan(key string, fn func() (T, error)) <-chan Result[T] {
+	ch := make(chan Result[T], 1)
+	g.mu.Lock()
+	if g.m == nil {
+		g.m = make(map[string]*call[T])
+	}
+	if c, ok := g.m[key]; ok {
+		c.dups++
+		c.chans = append(c.chans, ch)
 		g.mu.Unlock()
-		c.wg.Done()
-	}()
+		return ch
+	}
+	c := &call[T]{
+		chans: []chan<- Result[T]{ch},
+	}
+	c.wg.Add(1)
+	g.m[key] = c
+	g.mu.Unlock()
 
+	go g.doCall(c, key, fn)
+	return ch
+}
+
+func (g *Group[T]) doCall(c *call[T], key string, fn func() (T, error)) {
 	c.val, c.err = fn()
+	c.wg.Done()
+
+	g.mu.Lock()
+	delete(g.m, key)
+	for _, ch := range c.chans {
+		ch <- Result[T]{Val: c.val, Err: c.err, Shared: c.dups > 0}
+	}
+	g.mu.Unlock()
 }
