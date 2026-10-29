@@ -19,6 +19,8 @@
   - [4. Resilient Circuit Breaker](#4-resilient-circuit-breaker)
   - [5. Concurrent Event Bus (Pub/Sub)](#5-concurrent-event-bus-pubsub)
   - [6. Hedged Requests (Tail-Tolerance)](#6-hedged-requests-tail-tolerance)
+  - [7. Bulkhead Resource Isolation](#7-bulkhead-resource-isolation)
+  - [8. Resilient Exponential Backoff & Jitter](#8-resilient-exponential-backoff--jitter)
 - [Catalog of Patterns](#-catalog-of-patterns)
   - [Concurrency Primitives](#concurrency-primitives)
   - [Idiomatic & GoF Design Patterns](#idiomatic--gof-design-patterns)
@@ -120,6 +122,39 @@ sequenceDiagram
     Engine-->>Client: Return Result
 ```
 
+### 7. Bulkhead Resource Isolation
+```mermaid
+flowchart TD
+    Req[Incoming Requests] --> Limit{Active < MaxConcurrent?}
+    Limit -->|Yes: Permit Granted| Exec[Execute In-Flight Task]
+    Limit -->|No: Capacity Reached| QCheck{Queue < MaxWaitQueue?}
+    QCheck -->|Yes: Enqueue| Queue[(Bounded Wait Queue)]
+    QCheck -->|No: Full| Reject[Fail-Fast: ErrBulkheadFull]
+    Queue -->|QueueTimeout Elapsed| TimedOut[ErrQueueTimeout]
+    Queue -->|Permit Freed| Exec
+    Exec --> Done[Release Permit & Complete]
+```
+
+### 8. Resilient Exponential Backoff & Jitter
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Retrier as Retry Engine
+    participant S as Downstream Service / DB
+
+    Client->>Retrier: Execute(task)
+    Retrier->>S: Attempt 1
+    S-->>Retrier: 503 Transient Failure
+    Note over Retrier: Full Jitter Sleep: rand(0, base * 2^0)
+    Retrier->>S: Attempt 2
+    S-->>Retrier: 503 Transient Failure
+    Note over Retrier: Full Jitter Sleep: rand(0, base * 2^1)
+    Retrier->>S: Attempt 3
+    S-->>Retrier: 200 OK (Recovered)
+    Retrier-->>Client: Return Result
+```
+
 ---
 
 ## 📦 Catalog of Patterns
@@ -136,6 +171,8 @@ sequenceDiagram
 | **Singleflight** (`pkg/concurrency/singleflight`) | Suppresses duplicate in-flight requests (cache stampede prevention). | Executes identical concurrent requests only once, broadcasting results across all waiting callers. Supports blocking `Do()` and non-blocking `DoChan()` for timeout/context select loops. |
 | **Event Bus (Pub/Sub)** (`pkg/concurrency/pubsub`) | High-performance in-memory 1-to-N publish/subscribe broker. | Generic types, hierarchical/wildcard topic matching (`*`, `prefix.*`), configurable backpressure (`Block`, `DropOldest`, `DropNewest`), and leak-free graceful shutdown. |
 | **Hedged Requests** (`pkg/concurrency/hedged`) | Eliminates high-percentile (P99/P99.9) tail latency via speculative execution. | Configurable hedging delay, capped concurrency (`WithMaxHedges`), instant failover on early errors, context cancellation for losers, and atomic telemetry metrics. |
+| **Bulkhead** (`pkg/concurrency/bulkhead`) | Isolates downstream dependency resources and throttles execution. | Bounded concurrency limit, queue capacity buffering, strict queue wait timeout, fail-fast `TryExecute()`, zero allocations on fast-path. |
+| **Retry & Jitter** (`pkg/concurrency/retry`) | Resilient transient failure recovery with backoff and anti-collision jitter. | Exponential growth, configurable jitter strategies (`FullJitter`, `EqualJitter`, `NoJitter`), error classification predicates (`WithRetryIf`), and non-leaking context timers. |
 
 ### Idiomatic & GoF Design Patterns
 
@@ -166,6 +203,10 @@ BenchmarkPubSub_Publish_Wildcard-10            3938796        303.6 ns/op       
 BenchmarkHedged_PrimaryFast-10                 1321935        864.7 ns/op        648 B/op          9 allocs/op
 BenchmarkHedged_ParallelRace-10                1689344        722.1 ns/op        464 B/op          7 allocs/op
 BenchmarkCircuitBreaker_Execute_Closed-10     31254645         37.6 ns/op          0 B/op          0 allocs/op
+BenchmarkBulkhead_Execute_UnderLimit-10       19077610         65.8 ns/op          0 B/op          0 allocs/op
+BenchmarkBulkhead_TryExecute-10               17008509         70.0 ns/op          0 B/op          0 allocs/op
+BenchmarkRetry_ImmediateSuccess-10           13846765        116.0 ns/op          0 B/op          0 allocs/op
+BenchmarkRetry_TransientWithJitter-10           273542       3740.0 ns/op        247 B/op          2 allocs/op
 BenchmarkWorkerPool-10                            2457     481460 ns/op       4363 B/op         16 allocs/op
 BenchmarkUnboundedGoroutines-10                   3879     294619 ns/op      40059 B/op       2001 allocs/op
 ```

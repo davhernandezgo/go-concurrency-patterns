@@ -8,12 +8,14 @@ import (
 	"net/http/httptest"
 	"time"
 
+	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/bulkhead"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/circuitbreaker"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/fanout"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/hedged"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/pipeline"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/pubsub"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/ratelimiter"
+	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/retry"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/singleflight"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/workerpool"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/patterns/functionaloptions"
@@ -37,6 +39,8 @@ func main() {
 	runSingleflightDemo()
 	runPubSubDemo()
 	runHedgedDemo()
+	runBulkheadDemo()
+	runRetryDemo()
 
 	fmt.Println("\n✨ All pattern demonstrations finished successfully!")
 }
@@ -304,4 +308,74 @@ func runHedgedDemo() {
 	stats := engine.Stats()
 	fmt.Printf(" [Hedged Telemetry] Total: %d, PrimaryWins: %d, HedgeWins: %d, WinRatio: %.1f%%\n",
 		stats.TotalRequests, stats.PrimaryWins, stats.HedgeWins, stats.WinRatio())
+}
+
+func runBulkheadDemo() {
+	fmt.Println("\n--- [12] Concurrency: Bulkhead Resource Isolation Pattern ---")
+	bh := bulkhead.New[string](bulkhead.Config{
+		MaxConcurrent: 2,
+		MaxWaitQueue:  2,
+		QueueTimeout:  60 * time.Millisecond,
+	})
+
+	ctx := context.Background()
+
+	done := make(chan struct{})
+	for i := 1; i <= 5; i++ {
+		go func(taskID int) {
+			res, err := bh.Execute(ctx, func(ctx context.Context) (string, error) {
+				time.Sleep(30 * time.Millisecond)
+				return fmt.Sprintf("Result-%d", taskID), nil
+			})
+			if err != nil {
+				fmt.Printf(" [Bulkhead Worker %d] Rejected / Error: %v\n", taskID, err)
+			} else {
+				fmt.Printf(" [Bulkhead Worker %d] Completed: %s\n", taskID, res)
+			}
+			done <- struct{}{}
+		}(i)
+	}
+
+	for i := 1; i <= 5; i++ {
+		<-done
+	}
+
+	stats := bh.Stats()
+	fmt.Printf(" [Bulkhead Telemetry] Executed: %d, Rejected: %d, TimedOut: %d\n",
+		stats.TotalExecuted, stats.TotalRejected, stats.TotalTimedOut)
+}
+
+func runRetryDemo() {
+	fmt.Println("\n--- [13] Concurrency: Resilient Exponential Backoff & Jitter ---")
+	ctx := context.Background()
+	attemptCount := 0
+
+	retrier := retry.New[string](
+		retry.WithMaxAttempts(4),
+		retry.WithInitialInterval(10*time.Millisecond),
+		retry.WithMultiplier(2.0),
+		retry.WithJitter(retry.FullJitter),
+		retry.WithOnRetry(func(attempt int, err error, nextBackoff time.Duration) {
+			fmt.Printf(" [Retry Attempt %d Failed: '%v'] Backing off for %v with Full Jitter\n",
+				attempt, err, nextBackoff)
+		}),
+	)
+
+	res, err := retrier.Execute(ctx, func(ctx context.Context) (string, error) {
+		attemptCount++
+		if attemptCount < 3 {
+			return "", fmt.Errorf("connection reset by peer (503 Service Unavailable)")
+		}
+		return "HTTP/2 200 OK (Payload Delivered)", nil
+	})
+
+	if err != nil {
+		fmt.Printf(" [Retry Final] Failed: %v\n", err)
+	} else {
+		fmt.Printf(" [Retry Final] Success: %s (Total attempts: %d)\n", res, attemptCount)
+	}
+
+	stats := retrier.Stats()
+	fmt.Printf(" [Retry Telemetry] Total Calls: %d, Total Retries: %d, Success: %d, Backoff Duration: %v\n",
+		stats.TotalCalls, stats.TotalRetries, stats.SuccessfulCalls, stats.TotalBackoffDuration)
 }
