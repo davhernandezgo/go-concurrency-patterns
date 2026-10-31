@@ -159,4 +159,3 @@ func BenchmarkSingleflight_DuplicateSuppression(b *testing.B) {
 		}
 	})
 }
-

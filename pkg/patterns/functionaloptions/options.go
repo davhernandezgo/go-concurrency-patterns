@@ -7,12 +7,12 @@ import (
 
 // Server represents a configurable backend network server.
 type Server struct {
-	host         string
-	port         int
-	timeout      time.Duration
-	maxConns     int
-	tlsEnabled   bool
-	rateLimiter  bool
+	host        string
+	port        int
+	timeout     time.Duration
+	maxConns    int
+	tlsEnabled  bool
+	rateLimiter bool
 }
 
 // Option defines a functional option for configuring a Server.
@@ -93,9 +93,9 @@ func NewServer(host string, opts ...Option) (*Server, error) {
 }
 
 // Getters for inspection
-func (s *Server) Host() string          { return s.host }
-func (s *Server) Port() int             { return s.port }
+func (s *Server) Host() string           { return s.host }
+func (s *Server) Port() int              { return s.port }
 func (s *Server) Timeout() time.Duration { return s.timeout }
-func (s *Server) MaxConns() int         { return s.maxConns }
-func (s *Server) TLSEnabled() bool      { return s.tlsEnabled }
-func (s *Server) RateLimiter() bool     { return s.rateLimiter }
+func (s *Server) MaxConns() int          { return s.maxConns }
+func (s *Server) TLSEnabled() bool       { return s.tlsEnabled }
+func (s *Server) RateLimiter() bool      { return s.rateLimiter }

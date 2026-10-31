@@ -20,19 +20,19 @@ const (
 
 // Config holds circuit breaker parameters.
 type Config struct {
-	FailureThreshold    int           // consecutive failures to trip from Closed to Open
-	SuccessThreshold    int           // consecutive successes in Half-Open to recover to Closed
-	Timeout             time.Duration // cooldown period before transitioning from Open to Half-Open
+	FailureThreshold int           // consecutive failures to trip from Closed to Open
+	SuccessThreshold int           // consecutive successes in Half-Open to recover to Closed
+	Timeout          time.Duration // cooldown period before transitioning from Open to Half-Open
 }
 
 // CircuitBreaker guards operations against cascading failures.
 type CircuitBreaker struct {
-	config             Config
-	state              State
+	config              Config
+	state               State
 	consecutiveFailures int
 	consecutiveSuccess  int
-	lastStateChange    time.Time
-	mu                 sync.RWMutex
+	lastStateChange     time.Time
+	mu                  sync.RWMutex
 }
 
 // New creates a new CircuitBreaker.

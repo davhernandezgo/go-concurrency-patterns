@@ -16,6 +16,7 @@ import (
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/pubsub"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/ratelimiter"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/retry"
+	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/scattergather"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/singleflight"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/concurrency/workerpool"
 	"github.com/davhernandezgo/go-concurrency-patterns/pkg/patterns/functionaloptions"
@@ -41,6 +42,7 @@ func main() {
 	runHedgedDemo()
 	runBulkheadDemo()
 	runRetryDemo()
+	runScatterGatherDemo()
 
 	fmt.Println("\n✨ All pattern demonstrations finished successfully!")
 }
@@ -378,4 +380,59 @@ func runRetryDemo() {
 	stats := retrier.Stats()
 	fmt.Printf(" [Retry Telemetry] Total Calls: %d, Total Retries: %d, Success: %d, Backoff Duration: %v\n",
 		stats.TotalCalls, stats.TotalRetries, stats.SuccessfulCalls, stats.TotalBackoffDuration)
+}
+
+func runScatterGatherDemo() {
+	fmt.Println("\n--- [14] Concurrency: Scatter-Gather with Quorum & Cancellation ---")
+	ctx := context.Background()
+
+	// Example: Query 4 distributed inventory shards with a quorum requirement of 2.
+	// As soon as 2 fastest shards respond, slower shards are cancelled immediately!
+	engine := scattergather.New[string](
+		scattergather.WithMinQuorum[string](2),
+		scattergather.WithFastExitOnQuorum[string](true),
+	)
+
+	fmt.Println(" -> Scattering query across 4 distributed inventory shards (Quorum: 2)...")
+	results, err := engine.Execute(ctx,
+		func(ctx context.Context) (string, error) {
+			time.Sleep(10 * time.Millisecond)
+			return "Shard-US-East: 142 items in stock", nil
+		},
+		func(ctx context.Context) (string, error) {
+			time.Sleep(15 * time.Millisecond)
+			return "Shard-EU-Central: 98 items in stock", nil
+		},
+		func(ctx context.Context) (string, error) {
+			select {
+			case <-time.After(150 * time.Millisecond):
+				return "Shard-AP-South: 45 items in stock", nil
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		},
+		func(ctx context.Context) (string, error) {
+			select {
+			case <-time.After(200 * time.Millisecond):
+				return "Shard-SA-East: 21 items in stock", nil
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		},
+	)
+
+	if err != nil {
+		fmt.Printf(" [Scatter-Gather Error] %v\n", err)
+	} else {
+		fmt.Printf(" [Quorum Met Early!] Collected %d results:\n", len(results))
+		for _, r := range results {
+			if r.Err == nil {
+				fmt.Printf("   ✓ Shard Result: %s (took %v)\n", r.Value, r.Duration)
+			}
+		}
+	}
+
+	stats := engine.Stats()
+	fmt.Printf(" [Scatter-Gather Telemetry] Ops: %d, QuorumEarlyExits: %d, FullCompletions: %d, EarlyExitRatio: %.1f%%\n",
+		stats.TotalOperations, stats.QuorumEarlyExits, stats.FullCompletions, stats.QuorumEarlyExitRatio())
 }

@@ -21,6 +21,7 @@
   - [6. Hedged Requests (Tail-Tolerance)](#6-hedged-requests-tail-tolerance)
   - [7. Bulkhead Resource Isolation](#7-bulkhead-resource-isolation)
   - [8. Resilient Exponential Backoff & Jitter](#8-resilient-exponential-backoff--jitter)
+  - [9. Scatter-Gather with Quorum & Cancellation](#9-scatter-gather-with-quorum--cancellation)
 - [Catalog of Patterns](#-catalog-of-patterns)
   - [Concurrency Primitives](#concurrency-primitives)
   - [Idiomatic & GoF Design Patterns](#idiomatic--gof-design-patterns)
@@ -155,6 +156,32 @@ sequenceDiagram
     Retrier-->>Client: Return Result
 ```
 
+### 9. Scatter-Gather with Quorum & Cancellation
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant SG as ScatterGather Coordinator
+    participant S1 as Shard 1 (Fast)
+    participant S2 as Shard 2 (Fast)
+    participant S3 as Shard 3 (Slow / Hangs)
+    participant S4 as Shard 4 (Slow / Hangs)
+
+    Client->>SG: Execute(4 shards, MinQuorum: 2)
+    par Scatter Phase
+        SG->>S1: Query Shard 1
+        SG->>S2: Query Shard 2
+        SG->>S3: Query Shard 3
+        SG->>S4: Query Shard 4
+    end
+    S1-->>SG: 200 OK (10ms) [Success 1/2]
+    S2-->>SG: 200 OK (15ms) [Success 2/2: Quorum Met!]
+    Note over SG: Quorum Satisfied! Cancel in-flight slow shards
+    SG->>S3: Cancel Context (Abort I/O)
+    SG->>S4: Cancel Context (Abort I/O)
+    SG-->>Client: Return Aggregated Quorum Results (15ms total)
+```
+
 ---
 
 ## 📦 Catalog of Patterns
@@ -173,6 +200,7 @@ sequenceDiagram
 | **Hedged Requests** (`pkg/concurrency/hedged`) | Eliminates high-percentile (P99/P99.9) tail latency via speculative execution. | Configurable hedging delay, capped concurrency (`WithMaxHedges`), instant failover on early errors, context cancellation for losers, and atomic telemetry metrics. |
 | **Bulkhead** (`pkg/concurrency/bulkhead`) | Isolates downstream dependency resources and throttles execution. | Bounded concurrency limit, queue capacity buffering, strict queue wait timeout, fail-fast `TryExecute()`, zero allocations on fast-path. |
 | **Retry & Jitter** (`pkg/concurrency/retry`) | Resilient transient failure recovery with backoff and anti-collision jitter. | Exponential growth, configurable jitter strategies (`FullJitter`, `EqualJitter`, `NoJitter`), error classification predicates (`WithRetryIf`), and non-leaking context timers. |
+| **Scatter-Gather** (`pkg/concurrency/scattergather`) | Parallel query federation across distributed shards/replicas with quorum. | MinQuorum fast-exit, deadline-bounded graceful degradation, fail-fast on impossible quorum, early context cancellation of slower in-flight tasks, custom aggregation folding, and atomic telemetry. |
 
 ### Idiomatic & GoF Design Patterns
 
@@ -207,6 +235,9 @@ BenchmarkBulkhead_Execute_UnderLimit-10       19077610         65.8 ns/op       
 BenchmarkBulkhead_TryExecute-10               17008509         70.0 ns/op          0 B/op          0 allocs/op
 BenchmarkRetry_ImmediateSuccess-10           13846765        116.0 ns/op          0 B/op          0 allocs/op
 BenchmarkRetry_TransientWithJitter-10           273542       3740.0 ns/op        247 B/op          2 allocs/op
+BenchmarkScatterGather_FastQuorum-10           1334749        804.4 ns/op        984 B/op         16 allocs/op
+BenchmarkScatterGather_AllComplete-10          1414911        828.4 ns/op        984 B/op         16 allocs/op
+BenchmarkScatterGather_Aggregator-10           1941706        619.5 ns/op        936 B/op         15 allocs/op
 BenchmarkWorkerPool-10                            2457     481460 ns/op       4363 B/op         16 allocs/op
 BenchmarkUnboundedGoroutines-10                   3879     294619 ns/op      40059 B/op       2001 allocs/op
 ```
